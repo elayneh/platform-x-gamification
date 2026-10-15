@@ -129,6 +129,7 @@ details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-o
 .rgame .inside-title { color: var(--game); }
 .used-by { display: flex; flex-direction: column; gap: 8px; border-top: 1px dashed var(--line); padding-top: 12px; }
 .used-by ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.used-by li > b { font-weight: 700; }
 .used-by li { border: 1px solid var(--line); border-left: 3px solid var(--game); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; font-size: .88rem; min-width: 0; }
 .used-by a { color: var(--ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .used-by a:hover { text-decoration: underline; }
@@ -149,6 +150,9 @@ details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-o
 .goal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 32px; }
 .goal-list li { display: flex; gap: 8px; align-items: center; font-size: 1.05rem; }
 .goal-list .tick { margin-top: 0; }
+.compare td:first-child { font-family: var(--body); font-size: .95rem; white-space: normal; }
+.compare td:last-child { font-weight: 700; }
+.plain-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .ladder { display: flex; flex-direction: column; gap: 0; }
@@ -218,9 +222,24 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
   <div class="hero-text">
     <p class="eyebrow">A game plan for Platform-X</p>
     <h1>Platform-X <span>Quest</span></h1>
-    <p class="meta"><span>Prepared by Belayneh</span></p>
   </div>
 </header>
+
+<section>
+  <div class="section-head">
+    <p class="eyebrow">How Platform-X works today</p>
+    <h2>A quick picture of the app</h2>
+    <p class="lede">Companies need information. For example, Kifiya in Addis Ababa wants to know which small shops accept mobile payments. It posts a task. People called collectors do the task on their phone. A checker looks at the answers. Good answers are paid in ETB. Collectors take the money out with Telebirr, Chapa or CBE.</p>
+  </div>
+  <div class="loop">
+    <div class="step"><span class="n">1</span><b>Company posts a task</b><span>It sets the questions, the pay and the area.</span></div>
+    <div class="step"><span class="n">2</span><b>Collector does it</b><span>On the phone, even with no internet.</span></div>
+    <div class="step"><span class="n">3</span><b>Checker approves</b><span>Good work is accepted. Bad work is sent back.</span></div>
+    <div class="step"><span class="n">4</span><b>Collector gets paid</b><span>ETB goes into the app wallet.</span></div>
+    <div class="step"><span class="n">5</span><b>Collector cashes out</b><span>To Telebirr, Chapa or CBE.</span></div>
+  </div>
+  <p class="note">The app already has a wallet, bonuses, invite codes, reminders and a timer for daily jobs. The game can use all of these. We do not need to change how tasks work.</p>
+</section>
 
 <section>
   <div class="section-head">
@@ -241,7 +260,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
 <section>
   <div class="section-head">
     <p class="eyebrow">What we want</p>
-    <h2>Four things we want to grow</h2>
+    <h2>What we want to grow</h2>
   </div>
   <ul class="goal-list">
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>More people join</b></li>
@@ -250,22 +269,6 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>More tasks get done</b></li>
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Find the best people to hire</b></li>
   </ul>
-</section>
-
-<section>
-  <div class="section-head">
-    <p class="eyebrow">How Platform-X works today</p>
-    <h2>A quick picture of the app</h2>
-    <p class="lede">Companies need information. For example, Kifiya in Addis Ababa wants to know which small shops accept mobile payments. It posts a task. People called collectors do the task on their phone. A checker looks at the answers. Good answers are paid in ETB. Collectors take the money out with Telebirr, Chapa or CBE.</p>
-  </div>
-  <div class="loop">
-    <div class="step"><span class="n">1</span><b>Company posts a task</b><span>It sets the questions, the pay and the area.</span></div>
-    <div class="step"><span class="n">2</span><b>Collector does it</b><span>On the phone, even with no internet.</span></div>
-    <div class="step"><span class="n">3</span><b>Checker approves</b><span>Good work is accepted. Bad work is sent back.</span></div>
-    <div class="step"><span class="n">4</span><b>Collector gets paid</b><span>ETB goes into the app wallet.</span></div>
-    <div class="step"><span class="n">5</span><b>Collector cashes out</b><span>To Telebirr, Chapa or CBE.</span></div>
-  </div>
-  <p class="note">The app already has a wallet, bonuses, invite codes, reminders and a timer for daily jobs. The game can use all of these. We do not need to change how tasks work.</p>
 </section>
 
 <section class="rule">
@@ -304,6 +307,24 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
 
 <section>
   <div class="section-head">
+    <p class="eyebrow">Levels</p>
+    <h2>The 6 levels</h2>
+    </div><div class="level-flow"><span class="lvl">Kifiya Starter</span>
+    <span class="arrow" aria-hidden="true">-&gt;</span>
+    <span class="lvl">Kifiya Explorer</span>
+    <span class="arrow" aria-hidden="true">-&gt;</span>
+    <span class="lvl">Kifiya Achiever</span>
+    <span class="arrow" aria-hidden="true">-&gt;</span>
+    <span class="lvl">Kifiya Expert</span>
+    <span class="arrow" aria-hidden="true">-&gt;</span>
+    <span class="lvl">Kifiya Master</span>
+    <span class="arrow" aria-hidden="true">-&gt;</span>
+    <span class="lvl">Kifiya Legend</span>
+  </div>
+</section>
+
+<section>
+  <div class="section-head">
     <p class="eyebrow">The games</p>
     <h2>5 games, in the order we should build them</h2>
     <p class="lede">We had 16 ideas. We put them into 5 games. Number 1 should be built first. Each game says why it is in that place.</p></div>
@@ -334,6 +355,8 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
             <li><a href="https://support.google.com/local-guides/answer/6225851" target="_blank" rel="noopener">Google Maps Local Guides</a><span>People add photos and facts about places, earn points, and move up levels with badges.</span></li>
             <li><a href="https://www.uber.com/gb/en/drive/uber-pro/" target="_blank" rel="noopener">Uber Pro</a><span>Drivers move up tiers by doing good trips and get real rewards at each tier.</span></li>
             <li><a href="https://stackoverflow.com/help/whats-reputation" target="_blank" rel="noopener">Stack Overflow reputation</a><span>Good answers earn points. More points give more rights on the site.</span></li>
+            <li><a href="https://therideshareguy.com/field-agent-gigworker-review/" target="_blank" rel="noopener">Field Agent</a><span>A quality score decides who sees jobs. Rejected work lowers it. Same idea as our Trust Score.</span></li>
+            <li><b>Toloka</b><span>Skill scores open better-paying tasks. Same idea as our skill tests.</span></li>
           </ul>
         </div>
       </div>
@@ -374,6 +397,16 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
         <p class="pitch">Like an equb. A few friends make a team. The team has one goal for the week. If they reach it, everyone gets a bonus.</p>
         <div class="why"><b>Why third:</b> this is the best way to bring in new people. Everyone already knows how an equb works. Friends push each other to work. It needs games 1 and 2 first so we can count the team's progress.</div>
         <div class="inside">
+          <p class="inside-title">How it works</p>
+          <ul>
+            <li>A collector at the Kifiya Explorer level makes a squad and invites friends. Others can ask to join.</li>
+            <li>Each Monday the app sets one goal for the squad, based on team size, past work and tasks nearby. The leader cannot change it.</li>
+            <li>Every approved task from any member fills the squad's progress bar.</li>
+            <li>Goal reached by Sunday: every member gets the same bonus. Nobody pays money in.</li>
+            <li>Kifiya sets the rules and the money limit in the admin website.</li>
+          </ul>
+        </div>
+        <div class="inside">
           <p class="inside-title">What is inside</p>
           <ul>
             <li><b>Teams:</b> a shared weekly goal and a team bonus.</li>
@@ -386,6 +419,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
           <ul>
             <li><a href="https://blog.duolingo.com/friends-quests/" target="_blank" rel="noopener">Duolingo Friends Quests</a><span>Two friends share one weekly goal and win a reward together.</span></li>
             <li><a href="https://www.coachweb.com/fitness-apps/8942/strava-group-challenges" target="_blank" rel="noopener">Strava group challenges</a><span>Friends make a group, set a goal, and push each other to reach it.</span></li>
+            <li><a href="https://contributors.premise.com/blog/guide-to-enriching-experiences/" target="_blank" rel="noopener">Field Agent and Premise</a><span>Both pay collectors for inviting friends.</span></li>
           </ul>
         </div>
       </div>
@@ -430,6 +464,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
             <li><a href="https://apps.apple.com/us/app/-/id1390094962" target="_blank" rel="noopener">Premise</a><span>Pays people to do location tasks like taking photos of shops. Close to Platform-X.</span></li>
             <li><a href="https://www.uber.com/gb/en/drive/driver-app/how-surge-works/" target="_blank" rel="noopener">Uber surge map</a><span>A colored map shows drivers where they are needed and where pay is higher.</span></li>
             <li><a href="https://bulbapedia.bulbagarden.net/wiki/Gym_(GO)" target="_blank" rel="noopener">Pokémon GO gyms</a><span>Teams claim real places on the map, and others can take them back.</span></li>
+            <li><a href="https://therideshareguy.com/field-agent-gigworker-review/" target="_blank" rel="noopener">Field Agent</a><span>Pays a little more to do several tasks at one place.</span></li>
           </ul>
         </div>
       </div>
@@ -460,24 +495,6 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
       </div>
     </article>
 
-  </div>
-</section>
-
-<section>
-  <div class="section-head">
-    <p class="eyebrow">Levels</p>
-    <h2>The 6 levels</h2>
-    </div><div class="level-flow"><span class="lvl">Kifiya Starter</span>
-    <span class="arrow" aria-hidden="true">-&gt;</span>
-    <span class="lvl">Kifiya Explorer</span>
-    <span class="arrow" aria-hidden="true">-&gt;</span>
-    <span class="lvl">Kifiya Achiever</span>
-    <span class="arrow" aria-hidden="true">-&gt;</span>
-    <span class="lvl">Kifiya Expert</span>
-    <span class="arrow" aria-hidden="true">-&gt;</span>
-    <span class="lvl">Kifiya Master</span>
-    <span class="arrow" aria-hidden="true">-&gt;</span>
-    <span class="lvl">Kifiya Legend</span>
   </div>
 </section>
 
