@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&amp;family=Source+Sans+3:wght@400;600;700&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap">
 <style>
-/* Layout: one reading column with wide bands for the game catalog and the map; field-survey grid motif */
+/* Layout: one reading column; cards only for the 4 strategies */
 :root {
   --bg: #ffffff;
   --surface: #ffffff;
@@ -36,7 +36,6 @@ body {
   padding-block: 0 64px;
 }
 .wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 72px; }
-.col { max-width: 720px; }
 h1, h2, h3 { text-wrap: balance; margin: 0; }
 h1 { font-family: var(--display); font-weight: 400; font-size: clamp(2.6rem, 7vw, 4.4rem); line-height: 1.05; }
 h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.7rem, 3.6vw, 2.3rem); line-height: 1.15; }
@@ -50,22 +49,6 @@ section { display: flex; flex-direction: column; gap: 20px; }
 header.hero { padding-top: 56px; }
 .hero-text { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .hero h1 span { color: var(--accent); }
-.meta { font-family: var(--mono); font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.hex-board { width: 100%; max-width: 360px; justify-self: end; }
-.hex-board svg { width: 100%; height: auto; display: block; }
-
-.goals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.goal { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 4px; }
-.goal b { font-family: var(--body); font-weight: 700; font-size: 1.05rem; }
-.goal span { color: var(--muted); font-size: .9rem; }
-
-.fit { width: 100%; border-collapse: collapse; font-size: .95rem; background: var(--surface); }
-.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
-.fit th, .fit td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.fit tr:last-child td { border-bottom: 0; }
-.fit th { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
-.fit td:first-child { font-family: var(--mono); font-size: .85rem; white-space: nowrap; color: var(--accent); }
-.num { font-variant-numeric: tabular-nums; }
 
 .rule { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 28px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 28px; }
 .rule h2 { color: var(--ink); }
@@ -77,25 +60,7 @@ header.hero { padding-top: 56px; }
 .step .n { font-family: var(--mono); font-size: .75rem; color: var(--accent); }
 .step b { font-size: .98rem; }
 .step span { font-size: .88rem; color: var(--muted); }
-
-.filters { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { font: 500 .85rem var(--body); border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 6px 14px; border-radius: 999px; cursor: pointer; }
-.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .chip:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--muted); }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
-
-.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
-.game { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.game-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.tier { font-family: var(--mono); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; }
-.tier.core { background: var(--accent-soft); color: var(--accent); }
-.tier.bold { background: var(--gold-soft); color: var(--gold); }
-.tier.wild { background: var(--wild-soft); color: var(--wild); }
-.phase { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
-.game p { font-size: .93rem; }
-.game .how { font-size: .85rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 10px; }
-.game .how b { color: var(--ink); font-weight: 600; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font-size: .72rem; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); }
 
@@ -111,19 +76,10 @@ header.hero { padding-top: 56px; }
 .inside-title { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .inside { display: flex; flex-direction: column; gap: 6px; }
 .inside ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: .92rem; }
-.rgame .how { font-size: .85rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 10px; }
-.rgame .how b { color: var(--ink); font-weight: 600; }
-.rank-table td:first-child { font-family: var(--display); font-weight: 400; font-size: 1.1rem; }
 @media (max-width: 520px) { .rgame { grid-template-columns: minmax(0, 1fr); gap: 8px; } .rank-no { font-size: 1.8rem; } }
-
-details.tech { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-details.tech summary { cursor: pointer; padding: 12px 16px; font-weight: 600; font-size: .92rem; }
-details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tech-body { padding: 0 16px 16px; font-size: .88rem; color: var(--muted); }
 .g1, .g2, .g3, .g4, .g5 { --game: var(--accent); --game-soft: var(--accent-soft); }
 .rgame { border-top: 5px solid var(--game, var(--accent)); }
 .rgame .rank-no { color: var(--game); }
-.rgame .tier { background: var(--game-soft); color: var(--game); }
 .rgame .why { background: var(--game-soft); }
 .rgame .why b { color: var(--game); }
 .rgame .inside-title { color: var(--game); }
@@ -135,9 +91,6 @@ details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-o
 .used-by a:hover { text-decoration: underline; }
 .used-by a:focus-visible { outline: 2px solid var(--game); outline-offset: 2px; border-radius: 2px; }
 .used-by span { color: var(--muted); }
-.rank-table tr[class] td:first-child, .rank-table tr[class] td:nth-child(2) b { color: var(--game); }
-.goal[class*=" g"] { border-top: 4px solid var(--game); }
-.goal[class*=" g"] b { color: var(--game); }
 .ph[class*=" g"] { border-top: 5px solid var(--game); box-shadow: none; }
 .ph[class*=" g"] h3 { color: var(--game); }
 .level-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
@@ -150,25 +103,8 @@ details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-o
 .goal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 32px; }
 .goal-list li { display: flex; gap: 8px; align-items: center; font-size: 1.05rem; }
 .goal-list .tick { margin-top: 0; }
-.compare td:first-child { font-family: var(--body); font-size: .95rem; white-space: normal; }
-.compare td:last-child { font-weight: 700; }
-.plain-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
-.dropped { margin: 0; padding-left: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 8px 28px; font-size: .98rem; }
-@media (max-width: 520px) { .dropped { grid-template-columns: minmax(0, 1fr); } }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.ladder { display: flex; flex-direction: column; gap: 0; }
-.rung { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
-.rung:last-child { border-bottom: 0; }
-.rung .lv { font-family: var(--mono); color: var(--accent); font-size: .85rem; }
-.rung b { display: block; }
-.rung small { color: var(--muted); font-size: .85rem; }
-.rung .xp { font-family: var(--mono); font-size: .82rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.points { width: 100%; border-collapse: collapse; font-size: .92rem; }
-.points td { padding: 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.points tr:last-child td { border-bottom: 0; }
-.points td:last-child { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 12px; }
-.neg { color: #000000; }
 .note { font-size: .82rem; color: var(--muted); }
 
 .guards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
@@ -176,22 +112,9 @@ details.tech summary:focus-visible { outline: 2px solid var(--accent); outline-o
 .guard b { font-size: .95rem; }
 .guard span { font-size: .88rem; color: var(--muted); }
 
-.mermaid-box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; }
-
 .phases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .ph { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.ph .when { font-family: var(--mono); font-size: .75rem; color: var(--accent); }
 .ph ul { margin: 0; padding-left: 18px; font-size: .9rem; display: flex; flex-direction: column; gap: 4px; }
-.ph.first { border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
-
-.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 4px; }
-.kpi b { font-size: .98rem; }
-.kpi span { font-size: .86rem; color: var(--muted); }
-.kpi .t { font-family: var(--mono); font-size: .8rem; color: var(--accent); }
-
-ol.asks { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
-ol.asks li::marker { font-family: var(--mono); color: var(--accent); }
 .edit-bar { position: fixed; z-index: 10; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; max-width: calc(100vw - 32px); }
 .edit-bar button { font: 600 .9rem var(--body); border-radius: 999px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
 .edit-bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
@@ -203,15 +126,12 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
 
 @media (max-width: 820px) {
   header.hero, .rule, .two { grid-template-columns: minmax(0, 1fr); }
-  .hex-board { justify-self: start; max-width: 280px; }
   .goals, .phases { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpis { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 460px) {
   .goals, .phases { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .hex-board .pulse { animation: pulse 2.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .45; } }
 }
 </style>
@@ -240,7 +160,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
     <div class="step"><span class="n">4</span><b>Collector gets paid</b><span>ETB goes into the app wallet.</span></div>
     <div class="step"><span class="n">5</span><b>Collector cashes out</b><span>To Telebirr, Chapa or CBE.</span></div>
   </div>
-  <p class="note">The app already has a wallet, bonuses, invite codes, reminders and a timer for weekly jobs. This plan uses them. We do not change how tasks work.</p>
+  <p class="note">The app already has a wallet, bonuses, invite codes, reminders and tools to run weekly jobs. This plan uses them. We do not change how tasks work.</p>
 </section>
 
 <section>
@@ -304,13 +224,6 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
       <p>Work grades, like at a job. A good Trust Score and steady approved work move you up. Higher levels see better-paying tasks first.</p>
     </div>
   </div>
-</section>
-
-<section>
-  <div class="section-head">
-    <p class="eyebrow">Levels</p>
-    <h2>The 4 levels</h2>
-  </div>
   <div class="level-flow"><span class="lvl">Kifiya Starter</span>
     <span class="arrow" aria-hidden="true">-&gt;</span>
     <span class="lvl">Kifiya Verified</span>
@@ -341,8 +254,8 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
         <div class="inside">
           <p class="inside-title">What is inside</p>
           <ul>
-            <li><b>Trust Score:</b> a score for the quality of your work. Approved work raises it. Rejected work lowers it.</li>
-            <li><b>Levels:</b> work grades, like at a job. Higher levels see better-paying tasks first, get more task types and faster payout review.</li>
+            <li><b>Work profile:</b> level, Trust Score, approved tasks and skills in one place.</li>
+            <li><b>Level benefits:</b> better-paying tasks first, more task types and faster payout review.</li>
             <li><b>Welcome task:</b> a short practice task that teaches new collectors how to do good work.</li>
             <li><b>Later, certificates:</b> pass a short test to prove a skill, like photo surveys or shop checks, and get special tasks.</li>
             <li><b>Later, small loans:</b> a long, good work history can help collectors get small loans from Kifiya.</li>
@@ -458,9 +371,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
     <h2>Rules to protect money and trust</h2>
   </div>
   <div class="guards">
-    <div class="guard"><b>A money limit</b><span>Bonuses have a fixed ETB budget each month. When it runs out, no new bonuses are paid that month.</span></div>
-    <div class="guard"><b>Watch the cost</b><span>We check how much ETB the bonuses cost for each approved task.</span></div>
-    <div class="guard"><b>No luck</b><span>Every reward is earned by work. Nobody can pay in.</span></div>
+    <div class="guard"><b>A money limit</b><span>Bonuses have a fixed ETB budget each month. We also track the bonus cost for each approved task.</span></div>
     <div class="guard"><b>Stop cheating</b><span>Bonus limits, one account per phone, location checks, and referral rewards only after real work.</span></div>
     <div class="guard"><b>Fair for people with no internet</b><span>Work counts on the day it was done, not the day it was sent.</span></div>
     <div class="guard"><b>Privacy</b><span>A collector's profile is seen only by the collector and Kifiya. No public rankings.</span></div>
@@ -513,7 +424,7 @@ footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--lin
   <ul class="checks">
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Trust Score</b> shows who does careful, honest work over a long time.</span></li>
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Levels and weekly targets</b> show who is steady and keeps showing up.</span></li>
-    <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Team leaders</b> show who can lead and help others.</span></li>
+    <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Team work</b> shows who works well with others.</span></li>
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Certificates</b> show who is good at special work, like photos or surveys.</span></li>
     <li><svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Coverage work</b> shows who is ready to travel to new areas.</span></li>
   </ul>
