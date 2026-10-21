@@ -1,0 +1,1566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collector Growth System Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#fff;color:#111;font-family:"Source Sans 3",system-ui,sans-serif;font-size:17px;line-height:1.6}
+main{max-width:960px;margin:0 auto;padding:48px 16px 80px}
+h1{font-family:"DM Serif Display",serif;font-weight:400;font-size:40px;line-height:1.15;margin:0 0 32px}
+h2{font-family:"DM Serif Display",serif;font-weight:400;font-size:28px;margin:48px 0 12px;padding-top:16px;border-top:1px solid #ddd}
+p{margin:0 0 14px}
+code{font-family:"IBM Plex Mono",monospace;font-size:.86em;background:#f3f3f3;padding:1px 5px;border-radius:4px}
+pre{line-height:1.5;font-size:13px;background:#f6f6f6;border:1px solid #e3e3e3;border-radius:8px;padding:14px 16px;overflow-x:auto}
+pre code{background:none;padding:0;font-size:13px;line-height:1.5}
+.table-wrap{overflow-x:auto;margin:0 0 18px}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{border:1px solid #ddd;padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f6f6f6;font-weight:700}
+ul,ol{padding-left:24px;margin:0 0 14px}
+li{margin:4px 0}
+p code,li code,td code{overflow-wrap:anywhere}
+img.diagram{width:100%;height:auto;border:1px solid #e3e3e3;border-radius:8px;margin:8px 0 6px}
+</style>
+</head>
+<body>
+<main>
+<h1>Collector Growth System Design</h1>
+<h2>Module design</h2>
+<p>The service is split into modules. Each module is a NestJS module with the same <code>api / application / domain / infrastructure</code> folders as incentive-management. We follow three rules:</p>
+<ol>
+<li>Each module has its own PostgreSQL schema.</li>
+<li>A module never reads another module's tables.</li>
+<li>A module calls another module only through a port.</li>
+</ol>
+<p>A CI check (dependency-cruiser) fails the build if a module imports another module's <code>domain</code> or <code>infrastructure</code> folder. This keeps modules apart, so one team can work on one module, and a module can move to its own service later.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Schema</th>
+<th>Phase</th>
+<th>What it does</th>
+<th>Ports it calls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ingest</code></td>
+<td><code>growth_ingest</code></td>
+<td>0</td>
+<td>Reads task and user events, keeps collector status, runs the nightly catch-up job</td>
+<td><code>WorkLedgerPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>ledger</code></td>
+<td><code>growth_ledger</code></td>
+<td>0</td>
+<td>Saves each decision, weekly counts and all-time totals. Sends <code>growth.work.recorded</code>.</td>
+<td><code>OutboxPort</code></td>
+</tr>
+<tr>
+<td><code>rules</code></td>
+<td><code>growth_rules</code></td>
+<td>1</td>
+<td>Saves rule versions, checks them, turns them on</td>
+<td>None</td>
+</tr>
+<tr>
+<td><code>profile</code></td>
+<td><code>growth_profile</code></td>
+<td>1</td>
+<td>Level and level history</td>
+<td><code>RuleSetPort</code>, <code>WorkLedgerPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td><code>growth_trust</code></td>
+<td>1</td>
+<td>Trust Score</td>
+<td><code>RuleSetPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>goals</code></td>
+<td><code>growth_goals</code></td>
+<td>1</td>
+<td>Weekly goals and the Monday job</td>
+<td><code>RuleSetPort</code>, <code>WorkLedgerPort</code>, <code>ProfilePort</code>, <code>RewardPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>rewards</code></td>
+<td><code>growth_rewards</code></td>
+<td>1</td>
+<td>Bonus requests and their result</td>
+<td><code>OutboxPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>platform</code></td>
+<td><code>growth_platform</code></td>
+<td>0</td>
+<td>Outbox, inbox, job runs, module switches, duplicate request records</td>
+<td>None</td>
+</tr>
+<tr>
+<td><code>teams</code></td>
+<td><code>growth_teams</code></td>
+<td>2</td>
+<td>Teams and team counts</td>
+<td><code>WorkLedgerPort</code>, <code>RewardPort</code>, <code>InboxPort</code></td>
+</tr>
+<tr>
+<td><code>coverage</code></td>
+<td><code>growth_coverage</code></td>
+<td>3</td>
+<td>Areas that need data, area pay</td>
+<td><code>WorkLedgerPort</code>, <code>RewardPort</code>, <code>InboxPort</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Ports</strong></p>
+<pre><code class="language-ts">interface WorkLedgerPort {
+  record(fact: DecidedSubmission, tx: EntityManager): Promise&lt;RecordOutcome&gt;;
+  weekStats(collectorId: string, weeks: WeekKey[]): Promise&lt;WeekStat[]&gt;;
+  totals(collectorId: string): Promise&lt;CollectorTotals&gt;;
+  replay(from: Date, to: Date, sink: WorkListener): Promise&lt;void&gt;;
+}
+
+interface WorkListener {
+  readonly module: ModuleCode;
+  onWorkRecorded(e: WorkRecorded, tx: EntityManager): Promise&lt;void&gt;;
+}
+
+interface InboxPort {
+  claim(consumer: ModuleCode, externalEventId: string, tx: EntityManager): Promise&lt;boolean&gt;;
+}
+
+interface RuleSetPort {
+  active&lt;K extends RuleKind&gt;(kind: K, at: Date): Promise&lt;RuleSet&lt;K&gt;&gt;;
+}
+
+interface RewardPort {
+  request(r: RewardRequestInput, tx: EntityManager): Promise&lt;RewardRequestId&gt;;
+}
+
+interface ModuleSwitchPort {
+  isOn(module: ModuleCode, collectorId: string, tenantId?: string): Promise&lt;boolean&gt;;
+}
+</code></pre>
+<p><strong>Places to add new behaviour</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>What can grow</th>
+<th>Interface</th>
+<th>Phase 1</th>
+<th>Later</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Code that reacts to new work</td>
+<td><code>WorkListener</code></td>
+<td><code>profile</code>, <code>trust</code>, <code>goals</code></td>
+<td><code>teams</code>, <code>coverage</code>, <code>certificates</code></td>
+</tr>
+<tr>
+<td>How a goal size is set</td>
+<td><code>TargetPolicy</code></td>
+<td><code>TRAILING_AVERAGE_UPLIFT</code> (average of past weeks plus a percent), <code>FIXED</code></td>
+<td><code>SUPPLY_ADJUSTED</code> (uses tasks near the collector)</td>
+</tr>
+<tr>
+<td>What a goal counts</td>
+<td><code>GoalMetric</code></td>
+<td><code>APPROVED_COUNT</code></td>
+<td><code>EARNED_AMOUNT</code>, <code>ACTIVE_DAYS</code>, <code>AREA_APPROVED_COUNT</code></td>
+</tr>
+<tr>
+<td>Who owns a goal</td>
+<td><code>GoalSubject</code></td>
+<td><code>COLLECTOR</code></td>
+<td><code>TEAM</code></td>
+</tr>
+<tr>
+<td>Trust Score formula</td>
+<td><code>TrustFormula</code></td>
+<td><code>SMOOTHED_APPROVAL_V1</code></td>
+<td>New versions</td>
+</tr>
+<tr>
+<td>Level rules</td>
+<td><code>LevelPolicy</code></td>
+<td><code>THRESHOLD_V1</code></td>
+<td>New versions</td>
+</tr>
+<tr>
+<td>Reward kind</td>
+<td>A plain string saved as data</td>
+<td><code>GOAL</code></td>
+<td><code>TEAM_GOAL</code>, <code>INVITE_STEP</code>, <code>COVERAGE</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Each strategy has a code name and is saved in a <code>StrategyRegistry</code>. A rule set says which strategy code and version to use. To change behaviour, we add a new strategy and a new rule set. We never edit an old strategy, so we can always explain and recompute an old week.</p>
+<p>Listeners do not run inside the ledger transaction. The ledger saves the work row and puts one <code>growth.work.recorded</code> event in the outbox. Each listener module has its own queue and its own DLQ, and handles the event in its own transaction. The <code>tx</code> in <code>onWorkRecorded</code> is that module's own transaction. A bug or a slow query in one module stops only that module's queue. Work is still saved, and the module catches up after the fix. This is also how a module moves to its own service later: its queue stays the same, only the reader moves.</p>
+<h2>Data model</h2>
+<p>We use PostgreSQL 15 or later. The service has one database, and each module has its own schema in it. Foreign keys are used only inside one schema. When a table points to a row in another module, it stores only the id, and the port checks it. Ids that come from other services (collector, task, submission) keep their original type.</p>
+<p><img class="diagram" alt="schemas and tables of collector-growth" src="data-model.png" /></p>
+<p>Only <code>ingest</code> writes to the ledger. Profile, trust and goals are built from the ledger. Only goals can create a bonus request.</p>
+<p><strong>Phase 0 and 1 tables</strong></p>
+<pre><code class="language-sql">CREATE TABLE growth_platform.inbox_message (
+  consumer          varchar(32)  NOT NULL,
+  external_event_id varchar(200) NOT NULL,
+  routing_key       varchar(255) NOT NULL,
+  received_at       timestamptz  NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, external_event_id)
+);
+CREATE INDEX ON growth_platform.inbox_message (received_at);
+
+CREATE TABLE growth_ingest.synced_collector (
+  collector_id           varchar(64)  PRIMARY KEY,
+  status                 varchar(16)  NOT NULL CHECK (status IN ('ACTIVE','ARCHIVED','DELETED')),
+  source_updated_at      timestamptz  NOT NULL,
+  last_external_event_id varchar(200) NOT NULL
+);
+
+CREATE TABLE growth_ledger.work_fact (
+  submission_id        char(24)      NOT NULL CHECK (submission_id ~ '^[0-9a-f]{24}$'),
+  decided_at           timestamptz   NOT NULL,
+  root_submission_id   char(24)      NOT NULL,
+  attempt              smallint      NOT NULL CHECK (attempt &gt;= 1),
+  collector_id         varchar(64)   NOT NULL,
+  tenant_id            uuid,
+  task_id              char(24)      NOT NULL,
+  outcome              varchar(8)    NOT NULL CHECK (outcome IN ('APPROVED','REJECTED')),
+  reason_codes         text[]        NOT NULL DEFAULT '{}',
+  amount               numeric(18,2) NOT NULL CHECK (amount &gt;= 0),
+  currency             char(3)       NOT NULL DEFAULT 'ETB',
+  submitted_at         timestamptz   NOT NULL,
+  week_start           date          NOT NULL CHECK (extract(isodow FROM week_start) = 1),
+  area_tokens          text[],
+  event_schema_version smallint      NOT NULL,
+  recorded_at          timestamptz   NOT NULL DEFAULT now(),
+  PRIMARY KEY (submission_id, decided_at),
+  CHECK (outcome = 'REJECTED' OR cardinality(reason_codes) = 0)
+) PARTITION BY RANGE (decided_at);
+CREATE INDEX ON growth_ledger.work_fact (collector_id, week_start) INCLUDE (outcome, amount);
+
+CREATE TABLE growth_ledger.collector_week_stat (
+  collector_id    varchar(64)   NOT NULL,
+  week_start      date          NOT NULL CHECK (extract(isodow FROM week_start) = 1),
+  approved_count  integer       NOT NULL DEFAULT 0 CHECK (approved_count &gt;= 0),
+  rejected_count  integer       NOT NULL DEFAULT 0 CHECK (rejected_count &gt;= 0),
+  earned_amount   numeric(18,2) NOT NULL DEFAULT 0 CHECK (earned_amount &gt;= 0),
+  last_decided_at timestamptz   NOT NULL,
+  PRIMARY KEY (collector_id, week_start)
+);
+
+CREATE TABLE growth_ledger.collector_total (
+  collector_id     varchar(64)   PRIMARY KEY,
+  approved_count   bigint        NOT NULL DEFAULT 0 CHECK (approved_count &gt;= 0),
+  rejected_count   bigint        NOT NULL DEFAULT 0 CHECK (rejected_count &gt;= 0),
+  earned_amount    numeric(18,2) NOT NULL DEFAULT 0 CHECK (earned_amount &gt;= 0),
+  first_decided_at timestamptz   NOT NULL,
+  last_decided_at  timestamptz   NOT NULL
+);
+
+CREATE TABLE growth_rules.rule_set (
+  id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind                  varchar(16) NOT NULL CHECK (kind IN ('LEVEL','TRUST','GOAL')),
+  version               integer     NOT NULL CHECK (version &gt; 0),
+  status                varchar(10) NOT NULL CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  strategy_code         varchar(64) NOT NULL,
+  config_schema_version smallint    NOT NULL,
+  config                jsonb       NOT NULL CHECK (jsonb_typeof(config) = 'object'),
+  effective_from        timestamptz,
+  created_by            varchar(64) NOT NULL,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  activated_by          varchar(64),
+  activated_at          timestamptz,
+  row_version           integer     NOT NULL DEFAULT 0,
+  UNIQUE (kind, version),
+  CHECK (status = 'DRAFT' OR (effective_from IS NOT NULL AND activated_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX ON growth_rules.rule_set (kind, effective_from) WHERE status = 'ACTIVE';
+
+CREATE TABLE growth_profile.collector_level (
+  collector_id     varchar(64) PRIMARY KEY,
+  level_code       varchar(32) NOT NULL,
+  level_rank       smallint    NOT NULL CHECK (level_rank &gt;= 1),
+  rule_set_version integer     NOT NULL,
+  reached_at       timestamptz NOT NULL,
+  row_version      integer     NOT NULL DEFAULT 0
+);
+
+CREATE TABLE growth_profile.level_change (
+  id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  collector_id     varchar(64) NOT NULL,
+  from_level_code  varchar(32),
+  to_level_code    varchar(32) NOT NULL,
+  rule_set_version integer     NOT NULL,
+  changed_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON growth_profile.level_change (collector_id, changed_at DESC);
+
+CREATE TABLE growth_trust.trust_week_input (
+  collector_id        varchar(64)    NOT NULL,
+  week_start          date           NOT NULL,
+  approved_count      integer        NOT NULL DEFAULT 0 CHECK (approved_count &gt;= 0),
+  weighted_rejections numeric(10,3)  NOT NULL DEFAULT 0 CHECK (weighted_rejections &gt;= 0),
+  PRIMARY KEY (collector_id, week_start)
+);
+
+CREATE TABLE growth_trust.collector_trust (
+  collector_id     varchar(64)  PRIMARY KEY,
+  score            numeric(5,2) NOT NULL CHECK (score BETWEEN 0 AND 100),
+  formula_code     varchar(64)  NOT NULL,
+  rule_set_version integer      NOT NULL,
+  computed_at      timestamptz  NOT NULL
+);
+
+CREATE TABLE growth_goals.goal_definition (
+  id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  code         varchar(48) NOT NULL UNIQUE,
+  subject_type varchar(16) NOT NULL CHECK (subject_type IN ('COLLECTOR','TEAM')),
+  metric_code  varchar(48) NOT NULL,
+  period       varchar(8)  NOT NULL CHECK (period IN ('WEEK')),
+  reward_kind  varchar(32) NOT NULL,
+  status       varchar(10) NOT NULL CHECK (status IN ('ACTIVE','RETIRED'))
+);
+
+CREATE TABLE growth_goals.goal_instance (
+  id               uuid          NOT NULL DEFAULT gen_random_uuid(),
+  period_start     date          NOT NULL,
+  definition_id    uuid          NOT NULL REFERENCES growth_goals.goal_definition (id),
+  subject_type     varchar(16)   NOT NULL,
+  subject_id       varchar(64)   NOT NULL,
+  target           integer       NOT NULL CHECK (target &gt; 0),
+  bonus_amount     numeric(18,2) NOT NULL CHECK (bonus_amount &gt;= 0),
+  status           varchar(10)   NOT NULL CHECK (status IN ('OPEN','MET','MISSED','FORGIVEN','VOID')),
+  rule_set_version integer       NOT NULL,
+  met_at           timestamptz,
+  closed_at        timestamptz,
+  PRIMARY KEY (id, period_start),
+  UNIQUE (definition_id, subject_type, subject_id, period_start),
+  CHECK ((status = 'MET') = (met_at IS NOT NULL)),
+  CHECK (status IN ('OPEN','MET') OR closed_at IS NOT NULL)
+) PARTITION BY RANGE (period_start);
+CREATE INDEX ON growth_goals.goal_instance (subject_id, period_start DESC) WHERE status = 'OPEN';
+
+CREATE TABLE growth_rewards.reward_request (
+  id           uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
+  collector_id varchar(64)   NOT NULL,
+  kind         varchar(32)   NOT NULL,
+  amount       numeric(18,2) NOT NULL CHECK (amount &gt; 0),
+  currency     char(3)       NOT NULL DEFAULT 'ETB',
+  source_type  varchar(32)   NOT NULL,
+  source_id    varchar(100)  NOT NULL,
+  status       varchar(10)   NOT NULL CHECK (status IN ('REQUESTED','GRANTED','FAILED')),
+  failure_code varchar(48),
+  grant_id     uuid,
+  requested_at timestamptz   NOT NULL DEFAULT now(),
+  resolved_at  timestamptz,
+  UNIQUE (source_type, source_id, collector_id),
+  CHECK ((status = 'REQUESTED') = (resolved_at IS NULL)),
+  CHECK (status &lt;&gt; 'GRANTED' OR grant_id IS NOT NULL),
+  CHECK (status &lt;&gt; 'FAILED' OR failure_code IS NOT NULL)
+);
+CREATE INDEX ON growth_rewards.reward_request (requested_at) WHERE status = 'REQUESTED';
+CREATE INDEX ON growth_rewards.reward_request (collector_id, requested_at DESC);
+
+CREATE TABLE growth_platform.module_switch (
+  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_code     varchar(32) NOT NULL,
+  tenant_id       uuid,
+  enabled         boolean     NOT NULL,
+  rollout_percent smallint    NOT NULL CHECK (rollout_percent BETWEEN 0 AND 100),
+  updated_by      varchar(64) NOT NULL,
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  row_version     integer     NOT NULL DEFAULT 0,
+  UNIQUE NULLS NOT DISTINCT (module_code, tenant_id)
+);
+
+CREATE TABLE growth_platform.job_run (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_name    varchar(64) NOT NULL,
+  period_key  varchar(32) NOT NULL,
+  status      varchar(10) NOT NULL CHECK (status IN ('RUNNING','DONE','FAILED')),
+  shard_count smallint    NOT NULL CHECK (shard_count &gt; 0),
+  started_at  timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  UNIQUE (job_name, period_key)
+);
+
+CREATE TABLE growth_platform.job_shard (
+  job_run_id  uuid        NOT NULL REFERENCES growth_platform.job_run (id),
+  shard_no    smallint    NOT NULL CHECK (shard_no &gt;= 0),
+  status      varchar(10) NOT NULL CHECK (status IN ('PENDING','CLAIMED','DONE','FAILED')),
+  claim_token uuid,
+  lease_until timestamptz,
+  attempts    smallint    NOT NULL DEFAULT 0,
+  processed   integer     NOT NULL DEFAULT 0,
+  last_error  text,
+  PRIMARY KEY (job_run_id, shard_no)
+);
+CREATE INDEX ON growth_platform.job_shard (status, lease_until);
+</code></pre>
+<p><code>growth_platform</code> also has <code>domain_event_outbox</code>, copied from incentive-management, and <code>idempotency_record</code>, like task-management's <code>idempotencyRecord</code>.</p>
+<p><code>inbox_message</code> is shared by all modules through <code>InboxPort</code>. Its key includes <code>consumer</code>, so each module marks the same event as handled on its own.</p>
+<p><code>collector_total</code> holds all-time counts. Levels read it, so they never need to sum years of weekly rows.</p>
+<p><strong>Archive.</strong> <code>work_fact</code> partitions older than 13 months are detached and moved to the <code>growth_archive</code> schema on a cheaper tablespace. They are never dropped. A rebuild reads <code>growth_ledger.work_fact</code> and <code>growth_archive</code> together, so every built table, including all-time totals and levels, can always be rebuilt from the first day.</p>
+<p><strong>Phase 2 and 3 tables</strong></p>
+<pre><code class="language-sql">CREATE TABLE growth_teams.team (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        varchar(60) NOT NULL,
+  owner_id    varchar(64) NOT NULL,
+  max_members smallint    NOT NULL CHECK (max_members BETWEEN 3 AND 6),
+  status      varchar(10) NOT NULL CHECK (status IN ('ACTIVE','CLOSED')),
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE growth_teams.team_member (
+  team_id      uuid        NOT NULL REFERENCES growth_teams.team (id),
+  collector_id varchar(64) NOT NULL,
+  joined_at    timestamptz NOT NULL DEFAULT now(),
+  left_at      timestamptz,
+  PRIMARY KEY (team_id, collector_id, joined_at),
+  CHECK (left_at IS NULL OR left_at &gt; joined_at)
+);
+CREATE UNIQUE INDEX ON growth_teams.team_member (collector_id) WHERE left_at IS NULL;
+
+CREATE TABLE growth_teams.team_week_stat (
+  team_id        uuid    NOT NULL REFERENCES growth_teams.team (id),
+  week_start     date    NOT NULL CHECK (extract(isodow FROM week_start) = 1),
+  approved_count integer NOT NULL DEFAULT 0 CHECK (approved_count &gt;= 0),
+  PRIMARY KEY (team_id, week_start)
+);
+
+CREATE TABLE growth_coverage.area_demand (
+  area_token     varchar(200)  NOT NULL,
+  period_start   date          NOT NULL,
+  target_count   integer       NOT NULL CHECK (target_count &gt; 0),
+  bonus_per_unit numeric(18,2) NOT NULL CHECK (bonus_per_unit &gt; 0),
+  status         varchar(10)   NOT NULL CHECK (status IN ('OPEN','FILLED','CLOSED')),
+  PRIMARY KEY (area_token, period_start)
+);
+
+CREATE TABLE growth_coverage.coverage_award (
+  submission_id     char(24)     PRIMARY KEY,
+  area_token        varchar(200) NOT NULL,
+  period_start      date         NOT NULL,
+  reward_request_id uuid         NOT NULL,
+  FOREIGN KEY (area_token, period_start)
+    REFERENCES growth_coverage.area_demand (area_token, period_start)
+);
+</code></pre>
+<p>The partial unique index on <code>team_member</code> means a collector is in only one team at a time. Old memberships are kept, so work counts for the team the collector was in when they did the work. <code>coverage_award</code> allows one award per submission. <code>reward_request_id</code> points to <code>growth_rewards.reward_request</code> by id only, because that table belongs to another module.</p>
+<p>Team goals use the same <code>goal_instance</code> table with <code>subject_type = 'TEAM'</code>. Phases 2 and 3 do not change any Phase 1 table. The only exception is filling <code>work_fact.area_tokens</code>, which already exists and can be empty.</p>
+<h2>Database design</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>What we do</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Normal form</td>
+<td>Tables we write to are in third normal form. We do not save goal progress. We read it from <code>collector_week_stat</code> by primary key. Levels read <code>collector_total</code>, not their own copy of the count.</td>
+<td>One number lives in one place, so two copies cannot disagree.</td>
+</tr>
+<tr>
+<td>Ledger first</td>
+<td><code>work_fact</code> only gets new rows and is never deleted. Weekly counts, totals, level, Trust Score and goals are built from it.</td>
+<td>If a formula changes or has a bug, we rebuild those tables from <code>work_fact</code> and <code>growth_archive</code>.</td>
+</tr>
+<tr>
+<td>Keys</td>
+<td>Use the source id when there is one (<code>submission_id</code>, <code>collector_id</code>). Use <code>uuid</code> for rows we create. Use <code>bigint</code> identity for big history tables.</td>
+<td>A duplicate event hits the primary key and is skipped. Number ids keep history indexes small.</td>
+</tr>
+<tr>
+<td>Keys on split tables</td>
+<td><code>work_fact</code> key is <code>(submission_id, decided_at)</code>. <code>goal_instance</code> key is <code>(id, period_start)</code>.</td>
+<td>PostgreSQL needs the partition column in every unique key. <code>decided_at</code> never changes for a submission, so it is still one row per submission.</td>
+</tr>
+<tr>
+<td>CHECK constraints</td>
+<td>Every status, amount, score, count and week start has a CHECK. Some CHECKs tie two columns together, for example status <code>MET</code> needs <code>met_at</code>.</td>
+<td>The database blocks bad data even if the code has a bug. incentive-management does the same for wallets.</td>
+</tr>
+<tr>
+<td>Status values</td>
+<td><code>varchar</code> with a CHECK, not a PostgreSQL <code>ENUM</code></td>
+<td>Adding or removing a value is a simple <code>ALTER</code>. Removing an <code>ENUM</code> value is hard.</td>
+</tr>
+<tr>
+<td>Money</td>
+<td><code>numeric(18,2)</code> in ETB, with the existing <code>MoneyColumn</code></td>
+<td>Same as incentive-management. No rounding errors.</td>
+</tr>
+<tr>
+<td>Time</td>
+<td><code>timestamptz</code> for moments, <code>date</code> for weeks. A week starts Monday 00:00 Addis Ababa time. The code computes <code>week_start</code> from <code>submitted_at</code>.</td>
+<td>Every module uses the same week.</td>
+</tr>
+<tr>
+<td>Partitions</td>
+<td><code>work_fact</code> is split by month on <code>decided_at</code>. <code>goal_instance</code> is split by quarter on <code>period_start</code>. A scheduled job creates new partitions ahead of time.</td>
+<td>Queries only touch recent data. Old partitions move to the archive without a slow <code>DELETE</code>.</td>
+</tr>
+<tr>
+<td>Partitions later</td>
+<td><code>collector_week_stat</code>, <code>collector_total</code> and <code>collector_level</code> start as normal tables. Their keys start with <code>collector_id</code>.</td>
+<td>We can split them by collector later without changing keys.</td>
+</tr>
+<tr>
+<td>Indexes</td>
+<td>Indexes follow how we read data: <code>(collector_id, week_start)</code> with <code>INCLUDE</code>, and partial indexes for <code>OPEN</code> goals and <code>REQUESTED</code> rewards.</td>
+<td>Small indexes. The app's main reads come straight from the index.</td>
+</tr>
+<tr>
+<td>No duplicates</td>
+<td>Every consumer first calls <code>InboxPort.claim</code>, an <code>INSERT … ON CONFLICT DO NOTHING</code> on <code>(consumer, external_event_id)</code>. If no row is inserted, the event is a duplicate for that module and it stops. The claim and the module's writes and outbox rows share one transaction.</td>
+<td>RabbitMQ can deliver a message more than once. Each module still applies it once. This fixes C15.</td>
+</tr>
+<tr>
+<td>Module isolation</td>
+<td>The ledger transaction saves only the work row, the counts and one outbox event. Each module then works in its own transaction from its own queue.</td>
+<td>A bug in one module cannot stop work from being saved or block other modules.</td>
+</tr>
+<tr>
+<td>Safe in parallel</td>
+<td>Counters use <code>UPDATE … SET approved_count = approved_count + 1 … RETURNING</code>. Status changes have a condition, for example <code>UPDATE goal_instance SET status = 'MET' … WHERE status = 'OPEN' AND target &lt;= $count RETURNING id</code>. Admin edits check <code>row_version</code>.</td>
+<td>Many workers can run at once, in any order. A goal is marked met only once.</td>
+</tr>
+<tr>
+<td>Rules cannot change</td>
+<td>A database trigger blocks changes to <code>config</code>, <code>strategy_code</code> and <code>version</code> after a rule set leaves <code>DRAFT</code>.</td>
+<td>Every saved row keeps the rule version it used, so we can always explain past weeks.</td>
+</tr>
+<tr>
+<td>Archive and cleanup</td>
+<td><code>work_fact</code> partitions older than 13 months move to <code>growth_archive</code> on cheaper storage and stay readable. <code>inbox_message</code> rows older than 30 days are deleted every day. Counts and history are kept.</td>
+<td>The live table stays small, and we can still rebuild from the first day. The nightly catch-up looks back only 3 days, well inside 30.</td>
+</tr>
+<tr>
+<td>Migrations</td>
+<td>TypeORM migrations run at startup under the existing lock. A change first adds the new shape, and a later release removes the old shape. Big indexes use <code>CREATE INDEX CONCURRENTLY</code> in their own migration.</td>
+<td>Deploys with no downtime while old and new pods run together.</td>
+</tr>
+<tr>
+<td>Personal data</td>
+<td>We save only ids, counts and amounts. No names, phone numbers or GPS points. Phase 3 adds area names only.</td>
+<td>Less personal data to protect.</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Event contracts and flows</h2>
+<p>All events go through the existing <code>domain.events</code> exchange with the existing envelope <code>{routingKey, payload, emittedAt}</code>. New events also have <code>schemaVersion</code>. We only add fields to an event. If we must break an event, we make a new routing key ending in <code>.v2</code> and send both until every reader has moved.</p>
+<p>Each event has a JSON Schema file in the repo of the service that sends it, at <code>contracts/events/&lt;routingKey&gt;.v&lt;schemaVersion&gt;.json</code>. Both sides check these in CI (see Testing), so a sender cannot change an event by mistake.</p>
+<p><strong>Queues</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Queue</th>
+<th>Read by</th>
+<th>Routing keys</th>
+<th>DLQ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>collector-growth.work-events</code></td>
+<td><code>ingest</code></td>
+<td><code>task.submission.decided</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>collector-growth.sync-events</code></td>
+<td><code>ingest</code></td>
+<td><code>user.created</code>, <code>user.updated</code>, <code>user.archived</code>, <code>user.deleted</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>collector-growth.profile</code></td>
+<td><code>profile</code></td>
+<td><code>growth.work.recorded</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>collector-growth.trust</code></td>
+<td><code>trust</code></td>
+<td><code>growth.work.recorded</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>collector-growth.goals</code></td>
+<td><code>goals</code></td>
+<td><code>growth.work.recorded</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>collector-growth.reward-replies</code></td>
+<td><code>rewards</code></td>
+<td><code>growth.reward.granted</code>, <code>growth.reward.failed</code></td>
+<td><code>.dlq</code></td>
+</tr>
+<tr>
+<td><code>incentive-management.growth-rewards</code></td>
+<td>incentive-management</td>
+<td><code>growth.reward.requested</code></td>
+<td><code>.dlq</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Phase 2 adds <code>collector-growth.teams</code> and Phase 3 adds <code>collector-growth.coverage</code>, both bound to <code>growth.work.recorded</code>.</p>
+<p><strong>Event formats</strong></p>
+<pre><code class="language-json">{
+  &quot;routingKey&quot;: &quot;task.submission.decided&quot;,
+  &quot;payload&quot;: {
+    &quot;schemaVersion&quot;: 1,
+    &quot;externalEventId&quot;: &quot;tms:submission-decided:&lt;submission _id&gt;&quot;,
+    &quot;submissionId&quot;: &quot;&lt;submission _id&gt;&quot;,
+    &quot;rootSubmissionId&quot;: &quot;&lt;rootSubmissionId or _id&gt;&quot;,
+    &quot;attempt&quot;: 2,
+    &quot;taskId&quot;: &quot;507f1f77bcf86cd799439011&quot;,
+    &quot;tenantId&quot;: &quot;&lt;corporate uuid or null&gt;&quot;,
+    &quot;collectorId&quot;: &quot;&lt;user id&gt;&quot;,
+    &quot;outcome&quot;: &quot;APPROVED&quot;,
+    &quot;reasonCode&quot;: [],
+    &quot;amount&quot;: 50,
+    &quot;currency&quot;: &quot;ETB&quot;,
+    &quot;submittedAt&quot;: &quot;2026-10-12T09:14:00.000Z&quot;,
+    &quot;decidedAt&quot;: &quot;2026-10-13T08:00:00.000Z&quot;
+  },
+  &quot;emittedAt&quot;: &quot;2026-10-13T08:00:01.000Z&quot;
+}
+</code></pre>
+<pre><code class="language-json">{
+  &quot;routingKey&quot;: &quot;growth.reward.requested&quot;,
+  &quot;payload&quot;: {
+    &quot;schemaVersion&quot;: 1,
+    &quot;externalEventId&quot;: &quot;growth:reward:&lt;reward_request.id&gt;&quot;,
+    &quot;requestId&quot;: &quot;&lt;reward_request.id&gt;&quot;,
+    &quot;collectorId&quot;: &quot;&lt;user id&gt;&quot;,
+    &quot;kind&quot;: &quot;GOAL&quot;,
+    &quot;programCode&quot;: &quot;growth-goal&quot;,
+    &quot;amount&quot;: 100,
+    &quot;currency&quot;: &quot;ETB&quot;,
+    &quot;sourceType&quot;: &quot;GOAL_INSTANCE&quot;,
+    &quot;sourceId&quot;: &quot;&lt;goal_instance.id&gt;&quot;
+  }
+}
+</code></pre>
+<p><code>growth.reward.granted</code> has <code>requestId</code>, <code>grantId</code> and <code>amount</code>. <code>growth.reward.failed</code> has <code>requestId</code> and <code>failureCode</code>. <code>failureCode</code> is one of <code>BUDGET_EXHAUSTED</code>, <code>PROGRAM_INACTIVE</code>, <code>PROGRAM_OUT_OF_WINDOW</code>, <code>PLATFORM_WALLET_INSUFFICIENT</code>, <code>INVALID_REQUEST</code>. incentive-management saves both in its outbox.</p>
+<p><code>growth.work.recorded</code> is sent by the ledger to the growth modules. It has <code>schemaVersion</code>, <code>externalEventId</code> (<code>growth:work:&lt;submissionId&gt;</code>), <code>submissionId</code>, <code>collectorId</code>, <code>tenantId</code>, <code>outcome</code>, <code>reasonCode</code>, <code>amount</code>, <code>weekStart</code>, <code>submittedAt</code> and <code>decidedAt</code>.</p>
+<p><strong>Flow A: a submission is approved or rejected</strong></p>
+<ol>
+<li>task-management saves the decision and an outbox row in one MongoDB transaction. Its outbox job sends <code>task.submission.decided</code>.</li>
+<li>The <code>ingest</code> worker, in one transaction: claims <code>(ingest, externalEventId)</code> in the inbox and stops if it is a duplicate. Then it inserts the <code>work_fact</code> row, adds to <code>collector_week_stat</code> and <code>collector_total</code>, and puts one <code>growth.work.recorded</code> in the outbox. Commit.</li>
+<li>The outbox job publishes <code>growth.work.recorded</code>. RabbitMQ copies it to the <code>profile</code>, <code>trust</code> and <code>goals</code> queues.</li>
+<li><code>trust</code>, in its own transaction: claims <code>(trust, externalEventId)</code>, updates <code>trust_week_input</code>, and recomputes the score from the last 13 weeks.</li>
+<li><code>profile</code>, in its own transaction: claims <code>(profile, externalEventId)</code>, reads totals through <code>WorkLedgerPort</code>, and checks the level rules. If the level changes, it saves <code>level_change</code> and puts <code>collector.level.changed</code> and a push message in the outbox.</li>
+<li><code>goals</code>, in its own transaction: claims <code>(goals, externalEventId)</code>, reads this week's count through <code>WorkLedgerPort</code>, and tries the <code>OPEN → MET</code> update. If a row comes back, <code>rewards</code> saves a <code>reward_request</code> and puts <code>growth.reward.requested</code> in the outbox.</li>
+<li>If one module fails, only its own message is retried or sent to its DLQ. The saved work and the other modules are not affected.</li>
+</ol>
+<p>Modules read the current count when they run, which is never lower than the count when the event was made. So the order in which modules handle events does not matter.</p>
+<p><strong>Flow B: a bonus is paid or refused</strong></p>
+<ol>
+<li>incentive-management reads <code>growth.reward.requested</code> from its own queue.</li>
+<li>Transaction 1: find the active <code>PLATFORM_GROWTH</code> program by <code>programCode</code>. Call <code>issueGrant</code> with <code>externalEventId</code>, <code>sourceRefId = requestId</code>, <code>grantType = PLATFORM_GROWTH</code> and <code>metadata.source = 'GROWTH'</code>. Put <code>growth.reward.granted</code> in the outbox. Commit.</li>
+<li>If the bonus cannot be paid (budget used up, program off, outside its dates, platform wallet too low), roll back. Then in transaction 2, put <code>growth.reward.failed</code> with the reason in the outbox. Ack the message.</li>
+<li>For any other error, throw. The existing retry runs 3 times, then the message goes to the DLQ.</li>
+<li>If the same request comes again, <code>issueGrant</code> finds the existing payment by <code>externalEventId</code>, and we send <code>granted</code> again. Our service ignores a reply for a request that is already done.</li>
+<li>Our service updates <code>reward_request</code> only <code>WHERE status = 'REQUESTED'</code>, then tells the collector.</li>
+<li>A cleanup job alerts if a request waits more than 24 hours. It never pays again by itself.</li>
+</ol>
+<p><strong>Flow C: the Monday goal job, split into shards</strong></p>
+<ol>
+<li>The scheduler calls <code>POST /internal/jobs/weekly-goals</code> every Monday at 00:05 Addis Ababa time (Sunday 21:05 UTC).</li>
+<li>The API inserts a <code>job_run</code> row for this week. If it already exists, the week already ran, so it returns 200. If not, it inserts 64 <code>job_shard</code> rows and returns 202.</li>
+<li>Worker pods take shards with <code>FOR UPDATE SKIP LOCKED</code> and a time lease, the same way the outbox job works. Shard n has the collectors where <code>hashtext(collector_id) mod 64 = n</code>.</li>
+<li>For each collector in the shard: close last week's <code>OPEN</code> goal as <code>MISSED</code> or <code>FORGIVEN</code>. Then insert this week's goal with <code>ON CONFLICT DO NOTHING</code>. The goal size comes from the active GOAL rule set.</li>
+<li>Each shard sends one <code>send-notification-to-users</code> message. When all shards are <code>DONE</code>, the run is <code>DONE</code>.</li>
+</ol>
+<p><strong>Flow D: offline work that arrives late.</strong> Work for a week whose goal is <code>MISSED</code> or <code>FORGIVEN</code> can still meet it if it arrives within <code>lateSyncDays</code> after the week ends. Only in that window, the update allows <code>MISSED → MET</code> and <code>FORGIVEN → MET</code>. If a forgiven week becomes <code>MET</code>, the collector gets the forgiveness back.</p>
+<p><strong>Flow E: nightly catch-up.</strong> The scheduler calls <code>POST /internal/jobs/reconcile</code>. The job reads decisions from the last 3 days from task-management. Any decision whose <code>externalEventId</code> is not claimed by <code>ingest</code> goes through Flow A. Once task-management has its outbox, this job is a safety check and should find zero. We count what it finds and alert if it is above zero.</p>
+<p><strong>Flow F: collector status.</strong> <code>user.archived</code> and <code>user.deleted</code> update <code>synced_collector.status</code>. Listeners skip these collectors, and the Monday job gives them no goal.</p>
+<h2>APIs, auth and validation</h2>
+<p>All paths start with <code>/api/v1/growth</code> (URI versioning, like incentive-management). User routes use the user-management JWT, checked with the copied <code>common/auth</code> code. We always take the collector id from the token, never from the URL or body.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Who can call</th>
+<th>Phase</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /me</code></td>
+<td>Collectors</td>
+<td>1</td>
+<td>Level, Trust Score, this week's goal and progress, which features are on. Cached. Rate limited.</td>
+</tr>
+<tr>
+<td><code>GET /me/weeks?limit=12&amp;before=</code></td>
+<td>Collectors</td>
+<td>1</td>
+<td>Past weeks, paged by <code>week_start</code>. Can read from a read replica.</td>
+</tr>
+<tr>
+<td><code>GET /rule-sets?kind=</code>, <code>GET /rule-sets/:id</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><code>POST /rule-sets</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td>Makes a new DRAFT with the next version number</td>
+</tr>
+<tr>
+<td><code>PUT /rule-sets/:id</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td>DRAFT only. Needs <code>If-Match: &lt;row_version&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>POST /rule-sets/:id/preview</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td>Runs the rule on last week's data. Shows goal sizes and the ETB cost. Saves nothing.</td>
+</tr>
+<tr>
+<td><code>POST /rule-sets/:id/activate</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td>Turns it on from next Monday 00:00 Addis Ababa time. Needs <code>Idempotency-Key</code>.</td>
+</tr>
+<tr>
+<td><code>GET /switches</code>, <code>PUT /switches/:module</code></td>
+<td>Super admin</td>
+<td>1</td>
+<td>Needs <code>If-Match</code></td>
+</tr>
+<tr>
+<td><code>POST /internal/jobs/weekly-goals</code>, <code>/reconcile</code>, <code>/reward-sweep</code>, <code>/partitions</code></td>
+<td>Scheduler, with <code>requireApiKey('SCHEDULER_API_KEY')</code></td>
+<td>0 and 1</td>
+<td>Same headers and duplicate check as task-management scheduler jobs</td>
+</tr>
+<tr>
+<td><code>GET /internal/collectors/:id/work-summary</code></td>
+<td>Kifiya services, with <code>requireApiKey('KIFIYA_INTERNAL_API_KEY')</code></td>
+<td>Later</td>
+<td>For hiring and loan checks</td>
+</tr>
+<tr>
+<td><code>GET /me/team</code>, <code>POST /teams</code>, <code>POST /teams/:id/join</code>, <code>POST /teams/:id/leave</code></td>
+<td>Collectors</td>
+<td>2</td>
+<td></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>We check input in three places</strong></p>
+<ol>
+<li><strong>Request shape.</strong> The global <code>ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true })</code> with class-validator DTOs. <code>forbidNonWhitelisted</code> is stricter than incentive-management: a wrong field name gives an error instead of being ignored.</li>
+<li><strong>Rule meaning.</strong> Each <code>(kind, strategy_code, config_schema_version)</code> has its own DTO and its own checker. For example, <code>TRAILING_AVERAGE_UPLIFT</code> v1 checks <code>1 &lt;= lookbackWeeks &lt;= 12</code>, <code>0 &lt;= upliftPct &lt;= 100</code>, <code>minTarget &lt;= starterTarget &lt;= maxTarget</code>, and that every level in <code>bonusByLevel</code> exists in the active LEVEL rule set. We check again when the rule is turned on.</li>
+<li><strong>Database.</strong> CHECK and unique constraints catch anything the first two miss.</li>
+</ol>
+<p>Event payloads are checked with class-validator DTOs when they are read, like in incentive-management. A payload that fails the check goes to the DLQ with no retry.</p>
+<p>Internal API keys are compared in constant time, like task-management's <code>apiKey.middleware.ts</code>. Errors use the shared <code>HttpExceptionFilter</code> and the <code>common/response-format</code> shape.</p>
+<p><strong>Key rotation.</strong> Each internal key has a current and a next value, for example <code>SCHEDULER_API_KEY</code> and <code>SCHEDULER_API_KEY_NEXT</code>. The service accepts both. To rotate: set the next value, update the caller, then move next to current and clear next. No downtime, and no shared secret lives forever.</p>
+<p><strong>Rate limits.</strong> Collector routes allow 60 calls a minute per collector, using <code>@nestjs/throttler</code> with Redis storage, so all API pods share one count. Admin routes allow 120 calls a minute per user. A blocked call gets <code>429</code> with <code>Retry-After</code>.</p>
+<h2>Changes to existing services</h2>
+<p>Every change only adds things. No existing event field, table column or endpoint changes.</p>
+<p><strong>task-management</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Where</th>
+<th>Phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Call <code>emitSubmissionDecided(submission, task)</code> next to <code>emitSubmissionApproved</code> in <code>approve()</code>, and next to <code>emitAssignmentReleased</code> in <code>reject()</code></td>
+<td><code>events/domain/submissionEvents.ts</code>, <code>modules/submission/service/submissionService.ts</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td>Add <code>SubmissionDecided: 'task.submission.decided'</code> to <code>TASK_EVENTS</code></td>
+<td><code>events/domain/routingKeys.ts</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td>New route <code>GET /internal/growth/submissions/decided?since=&amp;until=&amp;cursor=</code> with <code>requireApiKey('GROWTH_API_KEY')</code>. Pages by <code>(updatedAt, _id)</code>.</td>
+<td>New route above <code>requireAuth</code>, like <code>schedulerJobsRoute.ts</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td>Index <code>{ status: 1, updatedAt: 1, _id: 1 }</code> on submissions</td>
+<td><code>models/submission</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td>Outbox for domain events: an <code>outboxMessage</code> collection written in the same MongoDB transaction as the submission change, and a relay in <code>worker.ts</code> that claims rows with an atomic <code>findOneAndUpdate</code>, like the export worker. <code>task.submission.decided</code> uses it first. Other events can move to it later. This fixes C3. MongoDB transactions need a replica set.</td>
+<td><code>models/outboxMessage</code>, <code>events/outbox</code>, <code>worker.ts</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>growthLevel</code> field on <code>UserProfile</code>, filled from <code>collector.level.changed</code>, and a <code>minGrowthLevel</code> rule for task targeting</td>
+<td><code>models/userProfile</code>, <code>audienceFilter.ts</code></td>
+<td>2</td>
+</tr>
+<tr>
+<td>The server finds the area from <code>location</code> and the <code>Locations</code> data, and saves it in <code>resolvedLocation</code></td>
+<td>Submission finalize code</td>
+<td>3</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>incentive-management</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Where</th>
+<th>Phase</th>
+<th>Fixes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Add <code>PLATFORM_GROWTH</code> to <code>BonusProgramType</code> and <code>BonusGrantType</code></td>
+<td><code>bonus/domain/bonus.enums.ts</code></td>
+<td>0</td>
+<td></td>
+</tr>
+<tr>
+<td>New helpers: <code>isPlatformFunded(type)</code> is true for REFERRAL and PLATFORM_GROWTH. <code>isSingleActive(type)</code> is true for REFERRAL only.</td>
+<td>New <code>bonus/domain/bonus-program.rules.ts</code></td>
+<td>0</td>
+<td>C8, C9</td>
+</tr>
+<tr>
+<td>Change each <code>type === REFERRAL</code> check to the right helper. Use <code>isPlatformFunded</code> for: which wallet pays, empty <code>tenant_id</code>, super admin only, lock budget on activate, release on disable. Keep REFERRAL for: one active program, referral links, requalify.</td>
+<td><code>bonus-grant.service.ts</code>, <code>bonus-program.service.ts</code></td>
+<td>0</td>
+<td>C8, C9</td>
+</tr>
+<tr>
+<td><code>PLATFORM_GROWTH</code> config is <code>{ programCode: string }</code>. <code>programCode</code> must be unique among active programs. <code>budgetCap &gt; 0</code> is needed to activate.</td>
+<td><code>bonus-config.validator.ts</code></td>
+<td>0</td>
+<td>C12</td>
+</tr>
+<tr>
+<td>Save <code>source: 'GROWTH'</code> in wallet credit metadata for <code>PLATFORM_GROWTH</code></td>
+<td><code>bonus-grant.service.ts</code></td>
+<td>0</td>
+<td>C13</td>
+</tr>
+<tr>
+<td>New <code>GrowthRewardConsumerService</code> on queue <code>incentive-management.growth-rewards</code> with its own DLQ, using <code>consumer-retry.ts</code>. Payment errors become <code>growth.reward.failed</code>.</td>
+<td>New <code>bonus/events/growth-reward-consumer.service.ts</code></td>
+<td>0</td>
+<td>C10, C11</td>
+</tr>
+<tr>
+<td>Outbox events <code>growth.reward.granted</code> and <code>growth.reward.failed</code></td>
+<td><code>common/events</code></td>
+<td>0</td>
+<td>C10</td>
+</tr>
+<tr>
+<td>Tests for each new path, plus tests that prove REFERRAL still works the same</td>
+<td><code>*.spec.ts</code></td>
+<td>0</td>
+<td></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>user-management, scheduler, notification, auditing.</strong> No code change. The scheduler gets two new jobs and the platform API key. notification and auditing get new messages on keys they already read.</p>
+<p><strong>mobile-app</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New <code>growth</code> feature with a "My Work" screen: level, Trust Score, goal progress, past weeks</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Reads <code>GET /api/v1/growth/me</code> and hides any part that is switched off</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Sends <code>resolvedLocation</code> for location-aware tasks</td>
+<td>3</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>super-admin-dashboard.</strong> Pages to draft, check, preview and turn on rule sets, and pages for module switches, in English and Amharic. Phase 1.</p>
+<h2>Testing</h2>
+<p>Every merge request runs the unit, integration, contract and migration tests. Replay and load tests run on staging.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>What it checks</th>
+<th>Tools</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unit</td>
+<td>Each strategy (<code>TargetPolicy</code>, <code>TrustFormula</code>, <code>LevelPolicy</code>) with table-driven cases. Each rule DTO and its checker, including bad values.</td>
+<td>Jest</td>
+<td>Every merge request</td>
+</tr>
+<tr>
+<td>Integration</td>
+<td>Each module against real PostgreSQL and RabbitMQ: the same event twice, events out of order, many workers at once, <code>OPEN → MET</code> happening once, a module failing while others go on, partition creation</td>
+<td>Jest, Testcontainers</td>
+<td>Every merge request</td>
+</tr>
+<tr>
+<td>Contract</td>
+<td>Every event matches its JSON Schema. Message contract tests between task-management and growth, and between growth and incentive-management. A sender's build fails if it breaks a reader's contract.</td>
+<td>JSON Schema (ajv), Pact, Pact Broker</td>
+<td>Every merge request on both sides</td>
+</tr>
+<tr>
+<td>incentive-management</td>
+<td>New <code>PLATFORM_GROWTH</code> paths, the failure reply, and tests that REFERRAL create, activate, pay and disable work as before</td>
+<td>Jest</td>
+<td>Every merge request</td>
+</tr>
+<tr>
+<td>Migration</td>
+<td>All migrations run up on an empty database and on a copy with production-like volume. The old code version runs against the new schema.</td>
+<td>CI job</td>
+<td>Every merge request that adds a migration</td>
+</tr>
+<tr>
+<td>Replay</td>
+<td>Rebuild every built table from <code>work_fact</code> and <code>growth_archive</code> into copy tables and compare row by row with the live tables</td>
+<td>Replay job</td>
+<td>Nightly on staging, and before any formula change</td>
+</tr>
+<tr>
+<td>Load</td>
+<td>Decided events at 5 times the expected peak. The Monday job for the full collector count. <code>GET /me</code> at peak app traffic.</td>
+<td>k6</td>
+<td>Before Phase 1 launch and before each big rollout step</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Monitoring and alerts</h2>
+<p>We use the same tools as incentive-management: Prometheus metrics with <code>prom-client</code>, OpenTelemetry traces (<code>observability/otel</code>), and JSON logs through <code>AppLogger</code>. The <code>x-correlation-id</code> from each request and event is kept in every log line and outgoing event, so one submission can be followed across services.</p>
+<p><strong>Metrics</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Labels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Messages handled, by result (<code>ok</code>, <code>duplicate</code>, <code>retry</code>, <code>dlq</code>)</td>
+<td>queue</td>
+</tr>
+<tr>
+<td>Queue lag (ready messages) and DLQ size</td>
+<td>queue</td>
+</tr>
+<tr>
+<td>Outbox rows waiting, and oldest wait time</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Events found by the nightly catch-up</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Reward requests by status, and oldest <code>REQUESTED</code> age</td>
+<td>kind</td>
+</tr>
+<tr>
+<td>Failed rewards</td>
+<td><code>failureCode</code></td>
+</tr>
+<tr>
+<td>Monday job duration and failed shards</td>
+<td>job</td>
+</tr>
+<tr>
+<td><code>GET /me</code> latency (p50, p95, p99) and cache hit rate</td>
+<td>route</td>
+</tr>
+<tr>
+<td><code>PLATFORM_GROWTH</code> budget left</td>
+<td>program</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Alerts</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Alert</th>
+<th>When it fires</th>
+<th>First step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DLQ not empty</td>
+<td>Any growth DLQ has messages for 10 minutes</td>
+<td>Read the error, fix the cause, replay from the DLQ admin endpoint (copied from incentive-management)</td>
+</tr>
+<tr>
+<td>Queue falling behind</td>
+<td>Ready messages keep growing for 15 minutes</td>
+<td>Check database load, then add worker pods</td>
+</tr>
+<tr>
+<td>Stuck reward</td>
+<td>A <code>REQUESTED</code> reward is older than 24 hours</td>
+<td>Check <code>incentive-management.growth-rewards</code> and its DLQ, and the program status</td>
+</tr>
+<tr>
+<td>Budget low</td>
+<td>Less than 20% of <code>budgetCap</code> left</td>
+<td>Operations tops up the platform wallet or raises the cap</td>
+</tr>
+<tr>
+<td>Monday job late</td>
+<td>Not <code>DONE</code> by 03:00 Addis Ababa time</td>
+<td>Check failed shards, then call the job again. It skips finished work.</td>
+</tr>
+<tr>
+<td>Catch-up found events</td>
+<td>Any events found in a night</td>
+<td>Check the task-management outbox and its relay</td>
+</tr>
+<tr>
+<td>Outbox stuck</td>
+<td>Oldest waiting row older than 5 minutes</td>
+<td>Check RabbitMQ and the relay logs</td>
+</tr>
+<tr>
+<td>Slow <code>GET /me</code></td>
+<td>p95 above 300 ms for 10 minutes</td>
+<td>Check cache hit rate and database load</td>
+</tr>
+</tbody>
+</table></div>
+<p>Each alert links to a runbook page in the repo, <code>docs/runbooks/&lt;alert&gt;.md</code>, with the checks and fixes above in more detail. One Grafana dashboard per module shows its metrics.</p>
+<h2>Change and extension</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>How we do it</th>
+<th>Code change?</th>
+<th>Data change?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New goal size, bonus amount, level limit or Trust weight</td>
+<td>Make a new rule set version, preview it, turn it on for next Monday</td>
+<td>No</td>
+<td>New <code>rule_set</code> row</td>
+</tr>
+<tr>
+<td>New way to set goals or compute trust</td>
+<td>Add a new strategy class with a code name, then a rule set that uses it</td>
+<td>Yes, new code only</td>
+<td>New <code>rule_set</code> row</td>
+</tr>
+<tr>
+<td>Fix a formula for past weeks</td>
+<td>Rebuild the table from <code>work_fact</code> and <code>growth_archive</code> into a copy, compare, then swap in one transaction</td>
+<td>Yes, new code only</td>
+<td>Rebuilt table</td>
+</tr>
+<tr>
+<td>New goal type (earned amount, active days)</td>
+<td>New <code>GoalMetric</code> and a new <code>goal_definition</code> row</td>
+<td>Yes, new code only</td>
+<td>New row</td>
+</tr>
+<tr>
+<td>New reward kind</td>
+<td>New <code>kind</code> value. If it needs its own budget, a new <code>PLATFORM_GROWTH</code> program.</td>
+<td>No</td>
+<td>New program in incentive-management</td>
+</tr>
+<tr>
+<td>New feature (for example certificates)</td>
+<td>New module and schema, a new queue bound to <code>growth.work.recorded</code>, behind a module switch</td>
+<td>Yes, new code only</td>
+<td>New schema and queue</td>
+</tr>
+<tr>
+<td>Turn a feature on, off or to a percent</td>
+<td><code>PUT /switches/:module</code></td>
+<td>No</td>
+<td>One row</td>
+</tr>
+<tr>
+<td>New field from task-management</td>
+<td>Add an optional field, raise <code>schemaVersion</code>, add the new JSON Schema file. Old readers ignore the field.</td>
+<td>Sender only</td>
+<td>New column that can be empty</td>
+</tr>
+<tr>
+<td>Breaking event change</td>
+<td>New routing key ending in <code>.v2</code>. Send both. Remove the old one when every reader has moved.</td>
+<td>Yes</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Rotate an internal API key</td>
+<td>Set the <code>_NEXT</code> value, update the caller, then swap</td>
+<td>No</td>
+<td>None</td>
+</tr>
+<tr>
+<td>One module outgrows the shared database</td>
+<td>Move its schema to its own database and its queue reader to a new service. Its queue and events stay the same.</td>
+<td>Yes, only at the port</td>
+<td>Schema moves</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Rules we always follow</strong></p>
+<ul>
+<li>A rule set cannot change after it leaves DRAFT. Every saved row keeps the rule version it used.</li>
+<li>We never edit a released strategy. A change is a new strategy code or version.</li>
+<li>Modules use ports, never each other's tables. CI checks this.</li>
+<li>Modules react to work through their own queue, never inside the ledger transaction.</li>
+<li>We never delete ledger rows. Old partitions move to the archive.</li>
+<li>A new column on an existing table can be empty or has a default. We remove old columns only after no running code uses them.</li>
+<li>A new event field is optional and its JSON Schema is updated in the same merge request. Readers ignore fields they do not know.</li>
+<li>Every feature is behind a module switch that starts off.</li>
+</ul>
+<h2>Scope and phases</h2>
+<p>Every reward comes only from approved work. There are no leaderboards, no public ranks and no luck prizes. All money is in ETB.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>What collectors see</th>
+<th>What we build</th>
+<th>Start when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0. Base</td>
+<td>Nothing yet</td>
+<td>New service saves work data in shadow mode. task-management sends a new event. incentive-management gets a new bonus type.</td>
+<td>Any time</td>
+</tr>
+<tr>
+<td>1. Profile and goals</td>
+<td>Level, Trust Score, weekly goal, goal bonus</td>
+<td>Profile, Trust, Goals and Rewards modules. "My Work" screen. Admin pages for rules.</td>
+<td>Our counts match task-management for 2 weeks</td>
+</tr>
+<tr>
+<td>2. Teams and invites</td>
+<td>Team goal, invite rewards, tasks only for higher levels</td>
+<td>Teams module. Level field in task targeting.</td>
+<td>Phase 1 bonus cost stayed in budget for 4 weeks</td>
+</tr>
+<tr>
+<td>3. Missing areas</td>
+<td>Extra pay for work in areas with little data</td>
+<td>Coverage module. The server checks the collector's area.</td>
+<td>Server area check is live</td>
+</tr>
+<tr>
+<td>Later</td>
+<td>Certificates, loan signal, hiring view</td>
+<td>Read-only APIs on the saved work data</td>
+<td>Product decides</td>
+</tr>
+</tbody>
+</table></div>
+<p>Phase 0 and 1 are ready to build. For Phases 2 and 3 we only defined tables, events and interfaces, so Phase 1 does not block them.</p>
+<h2>Problems in the current code</h2>
+<p>We read the code of the services we touch. Each row is a problem that would make this feature hard to build or ship in phases, and what we do about it. Other sections refer to these by number (C1 to C19).</p>
+<p><strong>task-management</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>Problem (where)</th>
+<th>Why it matters</th>
+<th>What we do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C1</td>
+<td><code>emitSubmissionApproved</code> stops early when <code>tenantId</code> is empty or <code>amount</code> is 0 (<code>events/domain/submissionEvents.ts</code>)</td>
+<td>Work on unpaid tasks is never sent</td>
+<td>Add a new event, <code>task.submission.decided</code>, that is always sent. Keep the old event as it is.</td>
+</tr>
+<tr>
+<td>C2</td>
+<td><code>reject()</code> only sends a notification, not a domain event. The key <code>task.submission.rejected</code> exists but is not used.</td>
+<td>We cannot see rejections, so we cannot compute the Trust Score</td>
+<td>The new event has <code>outcome</code> and <code>reasonCode[]</code></td>
+</tr>
+<tr>
+<td>C3</td>
+<td>Events are sent without an outbox (<code>void emit…</code>), and each send gets a new random <code>messageId</code></td>
+<td>An event is lost if RabbitMQ is down. We cannot use <code>messageId</code> to find duplicates.</td>
+<td>Use <code>payload.externalEventId</code> to find duplicates. task-management gets an outbox in Phase 1. A nightly job reads missed decisions until then, and stays on as a safety check.</td>
+</tr>
+<tr>
+<td>C4</td>
+<td>The approved event has no time of when the collector did the work</td>
+<td>Offline work could count in the wrong week</td>
+<td>The new event has <code>submittedAt</code>, which keeps the time from the phone</td>
+</tr>
+<tr>
+<td>C5</td>
+<td><code>UserProfile.selections</code> only holds address values</td>
+<td>Putting a level there mixes two different things</td>
+<td>Phase 2 adds a separate <code>growthLevel</code> field</td>
+</tr>
+<tr>
+<td>C6</td>
+<td>Submissions have no index on <code>{status, updatedAt}</code></td>
+<td>The nightly job query would be slow</td>
+<td>Add the index</td>
+</tr>
+<tr>
+<td>C7</td>
+<td>The location check trusts <code>resolvedLocation</code> sent by the app, and the app does not send it (<code>device_location.dart</code>)</td>
+<td>People could fake their area to get area pay</td>
+<td>Phase 3 waits until the server checks the area itself</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>incentive-management</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>Problem (where)</th>
+<th>Why it matters</th>
+<th>What we do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C8</td>
+<td><code>issueGrant</code> uses the platform wallet only when <code>program.type === REFERRAL</code></td>
+<td>A new platform-paid bonus type would take money from a corporate wallet</td>
+<td>Add <code>isPlatformFunded(type)</code> and use it in <code>issueGrant</code></td>
+</tr>
+<tr>
+<td>C9</td>
+<td>About 10 <code>REFERRAL</code> checks in <code>bonus-program.service.ts</code> mean two different things: "the platform pays" and "only one can be active"</td>
+<td>We cannot reuse the platform-paid code without changing these checks</td>
+<td>Add two helpers, <code>isPlatformFunded(type)</code> and <code>isSingleActive(type)</code>, and use the right one in each place</td>
+</tr>
+<tr>
+<td>C10</td>
+<td>When a bonus cannot be paid (budget used up, program not active), the consumer throws, retries 3 times, then puts the message in the DLQ. Nobody is told.</td>
+<td>The collector would see "bonus pending" forever</td>
+<td>The new consumer catches these errors and replies with <code>growth.reward.failed</code>. Only errors like a lost connection are retried.</td>
+</tr>
+<tr>
+<td>C11</td>
+<td>A message with a routing key the consumer does not handle goes to the DLQ</td>
+<td>Adding our key to the existing task queue could lose messages</td>
+<td>Use a new queue, <code>incentive-management.growth-rewards</code>, with its own DLQ</td>
+</tr>
+<tr>
+<td>C12</td>
+<td><code>maxGrantsPerCollector</code> counts over the whole life of a program</td>
+<td>A weekly limit would need new code</td>
+<td>No weekly limit in incentive-management. Our service makes sure each goal is paid once.</td>
+</tr>
+<tr>
+<td>C13</td>
+<td>Wallet history shows a source only for referral bonuses</td>
+<td>Growth bonuses would look like any other bonus</td>
+<td>Save <code>source: 'GROWTH'</code> for growth bonuses</td>
+</tr>
+<tr>
+<td>C14</td>
+<td><code>issueGrant</code> locks the program row for each payment</td>
+<td>Payments on one program run one at a time</td>
+<td>Use one program per reward kind. Watch how long payments wait.</td>
+</tr>
+<tr>
+<td>C15</td>
+<td><code>SyncIdempotencyService</code> checks for a duplicate, then inserts, in two steps</td>
+<td>Two workers can handle the same event at the same time</td>
+<td>Our inbox uses one atomic <code>INSERT … ON CONFLICT DO NOTHING</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Shared</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>Problem</th>
+<th>Why it matters</th>
+<th>What we do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C16</td>
+<td>RabbitMQ, outbox, <code>APP_ROLE</code> and Redis code live only inside incentive-management, not in a shared package</td>
+<td>The new service cannot import them</td>
+<td>Copy them from incentive-management for now. Move them to a shared package later.</td>
+</tr>
+<tr>
+<td>C17</td>
+<td>The scheduler ignores <code>x-idempotency-key</code></td>
+<td>A job can run twice</td>
+<td>Each job run has a fixed name and is saved, so a second call does nothing</td>
+</tr>
+<tr>
+<td>C18</td>
+<td>There is no feature flag system</td>
+<td>We cannot turn a feature on without a new release</td>
+<td>A <code>module_switch</code> table with on or off and a percent of collectors</td>
+</tr>
+<tr>
+<td>C19</td>
+<td>Only one referral program can be active, with one target</td>
+<td>Invite rewards in steps need more</td>
+<td>Keep the referral program as is. Extra invite steps are growth bonuses.</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Risks</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>What happens</th>
+<th>What we do</th>
+<th>How phases help</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lost task-management events (C3)</td>
+<td>Wrong progress, missed bonus</td>
+<td>task-management outbox in Phase 1. Nightly catch-up as a safety check, with an alert if it finds anything.</td>
+<td>Phase 0 runs with no money, so we see losses first</td>
+</tr>
+<tr>
+<td>A bug in one growth module</td>
+<td>That module stops working</td>
+<td>Each module has its own queue, transaction and DLQ. Work is still saved and other modules go on. The module catches up after the fix.</td>
+<td>New modules start behind a switch that is off</td>
+</tr>
+<tr>
+<td>Paying twice</td>
+<td>Lost money</td>
+<td>Unique <code>(source_type, source_id, collector_id)</code> on <code>reward_request</code>, unique <code>external_event_id</code> on <code>bonus_grants</code>, and the conditional <code>OPEN → MET</code></td>
+<td>First money goes to 5% of collectors with a low <code>budgetCap</code></td>
+</tr>
+<tr>
+<td>REFERRAL broken by the C9 change</td>
+<td>Referral payments stop or come from the wrong wallet</td>
+<td>Review each check by its meaning. Tests for REFERRAL create, activate, pay and disable.</td>
+<td>Ships in Phase 0 with no <code>PLATFORM_GROWTH</code> program active</td>
+</tr>
+<tr>
+<td>An event format changes by mistake</td>
+<td>Readers fail or drop data</td>
+<td>JSON Schema per event and contract tests on both sides in CI</td>
+<td>Formats are agreed before Phase 0 code starts</td>
+</tr>
+<tr>
+<td>Bonus request never finishes</td>
+<td>Collector sees "bonus pending"</td>
+<td><code>growth.reward.failed</code> reply, 24-hour alert, DLQ alert</td>
+<td>We see it in the pilot first</td>
+</tr>
+<tr>
+<td>Budget runs out</td>
+<td>Bonuses stop</td>
+<td><code>budgetCap</code> lock, <code>BUDGET_EXHAUSTED</code> shown as "bonus paused", budget-low alert at 20%</td>
+<td>Rollout percent limits spend</td>
+</tr>
+<tr>
+<td>Program row lock (C14)</td>
+<td>Slow payments at busy times</td>
+<td>One program per reward kind. Track lock wait time.</td>
+<td>Phase 1 has one kind and low volume</td>
+</tr>
+<tr>
+<td>Cannot rebuild old data</td>
+<td>A formula fix is wrong for old collectors</td>
+<td><code>work_fact</code> is never deleted. Old partitions stay readable in <code>growth_archive</code>. Nightly replay test on staging.</td>
+<td>Replay test runs from Phase 0</td>
+</tr>
+<tr>
+<td>Unfair goals</td>
+<td>Collectors stop trusting it</td>
+<td>Smallest, largest and starter goal sizes, one forgiven week, preview on real data</td>
+<td>Profile goes live a week before goals</td>
+</tr>
+<tr>
+<td>Late offline work</td>
+<td>A met goal shows as missed</td>
+<td>Week taken from <code>submittedAt</code>, <code>lateSyncDays</code> window, <code>MISSED → MET</code></td>
+<td>Phase 0 shows real sync delays</td>
+</tr>
+<tr>
+<td>Low-quality work for bonuses</td>
+<td>Paying for bad data</td>
+<td>Bonuses only follow human approval. A low Trust Score means a smaller bonus.</td>
+<td>Area pay waits for server checks</td>
+</tr>
+<tr>
+<td>Fake GPS (C7)</td>
+<td>Paying for fake area work</td>
+<td>Server area check, plus speed and distance checks</td>
+<td>Phase 3 waits for it</td>
+</tr>
+<tr>
+<td>Leaked internal key</td>
+<td>Someone calls internal jobs</td>
+<td>Keys compared in constant time, rotated with the current and next values</td>
+<td>None needed</td>
+</tr>
+<tr>
+<td>Too many calls to <code>GET /me</code></td>
+<td>Slow app for everyone</td>
+<td>Per-collector rate limit shared in Redis, cache</td>
+<td>None needed</td>
+</tr>
+<tr>
+<td>Copied shared code drifts</td>
+<td>A bug is fixed in one place only</td>
+<td>Move it to a shared package after Phase 1</td>
+<td>Only two services share it until then</td>
+</tr>
+<tr>
+<td>Slow app store releases</td>
+<td>Screens reach users late</td>
+<td>Ship the screen hidden, turn it on from admin</td>
+<td>The app can ship before the backend</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Open questions</h2>
+<p>These need an answer before coding starts.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>Question</th>
+<th>Why it blocks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Q1</td>
+<td>Is PostgreSQL version 15 or later?</td>
+<td>The first migration creates <code>module_switch</code> with <code>UNIQUE NULLS NOT DISTINCT</code>, which needs 15 or later. If not, the schema changes first.</td>
+</tr>
+<tr>
+<td>Q2</td>
+<td>Does task-management's MongoDB run as a replica set?</td>
+<td>The task-management outbox writes in a MongoDB transaction, and transactions need a replica set. If not, the way task-management sends events must be redesigned.</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Words used in this doc</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Word</th>
+<th>What it means here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Collector</td>
+<td>A person who does tasks in the mobile app</td>
+</tr>
+<tr>
+<td>Ledger</td>
+<td>The <code>work_fact</code> table. One row for each approved or rejected submission. We only add rows. We never change them.</td>
+</tr>
+<tr>
+<td>Built table</td>
+<td>A table we fill from the ledger, like weekly counts, level or Trust Score. We can delete it and build it again from the ledger.</td>
+</tr>
+<tr>
+<td>Rule set</td>
+<td>Settings saved as data, like goal size, bonus amount or level limits. Each change is a new version.</td>
+</tr>
+<tr>
+<td>Strategy</td>
+<td>A small piece of code that uses a rule set, like the code that sets a weekly goal</td>
+</tr>
+<tr>
+<td>Port</td>
+<td>A TypeScript interface one module uses to call another module</td>
+</tr>
+<tr>
+<td>Outbox</td>
+<td>A table where we save an event in the same transaction as the data change. A background job then sends it to RabbitMQ.</td>
+</tr>
+<tr>
+<td>Inbox</td>
+<td>A table of event ids each module already handled. We use it to skip duplicates.</td>
+</tr>
+<tr>
+<td>DLQ</td>
+<td>Dead letter queue. Where RabbitMQ puts a message that failed too many times.</td>
+</tr>
+<tr>
+<td>Shard</td>
+<td>One slice of a big job. Workers take slices one at a time.</td>
+</tr>
+<tr>
+<td>Module switch</td>
+<td>An on or off setting for one feature, with a percent of collectors</td>
+</tr>
+<tr>
+<td>Shadow mode</td>
+<td>The service runs and saves data, but the app does not show anything yet</td>
+</tr>
+</tbody>
+</table></div>
+</main>
+</body>
+</html>
